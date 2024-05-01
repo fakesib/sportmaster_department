@@ -1,0 +1,25 @@
+package com.fakesibwork.sportmaster.model;
+
+import jakarta.persistence.*;
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+@Entity
+@Data
+@Table(name = "users")
+@NoArgsConstructor
+@AllArgsConstructor
+public class MonthUser {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private int id;
+    private long chat;
+    private int store;
+    private String name;
+    private int here;
+    private int delivery;
+    private int mobile;
+    private int email;
+    private int fast;
+}
