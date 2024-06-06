@@ -7,19 +7,15 @@ import lombok.NoArgsConstructor;
 
 @Entity
 @Data
-@Table(name = "users")
+@Table(name = "transactions")
 @NoArgsConstructor
 @AllArgsConstructor
-public class MonthUser {
+public class Transaction {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private int id;
+    private String transaction;
     private long chat;
-    private int store;
-    private String name;
-    private int here;
-    private int delivery;
-    private int mobile;
-    private int email;
-    private int fast;
+    private int sum;
+    private String type;
 }
