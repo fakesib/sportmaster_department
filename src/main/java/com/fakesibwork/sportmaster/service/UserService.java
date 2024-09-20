@@ -10,7 +10,6 @@ import java.util.List;
 
 //TODO План за месяц, выполнение плана
 
-
 @Service
 public class UserService {
     @Autowired
@@ -70,6 +69,7 @@ public class UserService {
                 "БП: " + user.getDelivery() + "\n" +
                 "МП: " + user.getMobile() + "\n" +
                 "Email: " + user.getEmail() + "\n" +
+                "МК: " + user.getMobileCash() + "\n" +
                 "<i>*Данные обновляются каждый вечер</i>";
     }
 
@@ -94,6 +94,15 @@ public class UserService {
         builder.append("\nМП: ").append(data.getMobile());
         builder.append("\nEmail: ").append(data.getEmail());
         builder.append("\nБыстрые: ").append(data.getFast());
+        builder.append("\nМК: ").append(data.getMobileCash());
         return builder.toString();
+    }
+
+    public List<User> getEmployeesByStore(int store) {
+        return userRepo.findEmployeesByStore(store);
+    }
+
+    public int getStoreByChat(long userId) {
+        return userRepo.findStoreByChat(userId);
     }
 }

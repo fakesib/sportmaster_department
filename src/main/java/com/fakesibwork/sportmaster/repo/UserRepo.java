@@ -27,7 +27,7 @@ public interface UserRepo extends JpaRepository<User, Integer> {
     void deleteUserById(int id);
 
     @Modifying
-    @Query(value = "INSERT INTO users(chat, role, store, name, here, delivery, mobile, email, fast, id) VALUES(?1, ?2, ?3, ?4, 0, 0, 0, 0, 0, DEFAULT)", nativeQuery = true)
+    @Query(value = "INSERT INTO users(chat, role, store, name, here, delivery, mobile, email, fast, mobile_cash, id) VALUES(?1, ?2, ?3, ?4, 0, 0, 0, 0, 0, 0, DEFAULT)", nativeQuery = true)
     void addNewStaff(long chat, String role, int store, String name);
 
     @Query(value = "SELECT * FROM users WHERE id = ?1", nativeQuery = true)
@@ -41,13 +41,13 @@ public interface UserRepo extends JpaRepository<User, Integer> {
                                     "here = here + (SELECT here FROM day WHERE day.chat = users.chat), " +
                                     "mobile = mobile + (SELECT mobile FROM day WHERE day.chat = users.chat), " +
                                     "email = email + (SELECT email FROM day WHERE day.chat = users.chat), " +
-                                    "fast = fast + (SELECT fast FROM day WHERE day.chat = users.chat) WHERE chat = ?1", nativeQuery = true)
+                                    "fast = fast + (SELECT fast FROM day WHERE day.chat = users.chat)," +
+                                    "mobile_cash = mobile_cash + (SELECT mobile_cash FROM day WHERE day.chat = users.chat) WHERE chat = ?1", nativeQuery = true)
     void updateAllDayData(long chat);
 
     @Query(value = "SELECT * FROM users WHERE store = ?1 AND role = 'STORE'", nativeQuery = true)
     User findStoreByStore(int store);
 
-//    @Modifying
-//    @Query(value = "UPDATE users SET here = ?1, delivery = ?2, mobile = ?3, email = ?4, fast = ?5 WHERE chat = ?6")
-//    void updateData(int here, int delivery, int mobile, int email, int fast, long chat);
+    @Query(value = "SELECT * FROM users WHERE store = ?1 AND (role = 'SELLER' OR role ='CASHIER') ORDER BY name", nativeQuery = true)
+    List<User> findEmployeesByStore(int store);
 }

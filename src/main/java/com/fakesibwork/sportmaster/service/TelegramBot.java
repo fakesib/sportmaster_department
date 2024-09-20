@@ -39,6 +39,11 @@ public class TelegramBot extends TelegramLongPollingBot {
     Map<Long, String> userMap = new HashMap<>();
 
     Map<Long, List<String>> adminMap = new HashMap<>();
+    
+    Map<Long, Map<Integer, User>> adminPage = new HashMap<>();
+
+    Map<Long, Integer> adminPageCounter = new HashMap<>();
+    
 
     public TelegramBot(BotConfig botConfig) {
         this.botConfig = botConfig;
@@ -73,18 +78,34 @@ public class TelegramBot extends TelegramLongPollingBot {
 
             if (messageText.equals("/code")){
                 sendMessage(userId, "Твой userId: <code>" + userId + "</code>");
-            } else if (messageText.equals("/resetdaydata") && userService.getRole(userId).equals("ADMIN")) {
+            } else if (messageText.equals("/morning") && userService.getRole(userId).equals("MAIN")){
+                morningRoutine();
+                sendMessage(userId, "morning routine started");
+            } else if (messageText.equals("/evening") && userService.getRole(userId).equals("MAIN")){
+                eveningRoutine();
+                sendMessage(userId, "evening routine started");
+            } else if (messageText.equals("/notify") && userService.getRole(userId).equals("MAIN")) {
+                notifications();
+                sendMessage(userId, "Notification send");
+            } else if (messageText.equals("/stores") && userService.getRole(userId).equals("MAIN")) {
+                storesCommand(userId);
+            } else if (messageText.equals("/notifybyadmin") && userService.getRole(userId).equals("ADMIN")) {
+                notificationsByAdmin(userId);
+                sendMessage(userId, "Notification send");
+            } else if (messageText.equals("/resetdaydata") && userService.getRole(userId).equals("MAIN")) {
                 resetDayData();
                 sendMessage(userId, "Данные за сегодня обновлены");
-            } else if (messageText.equals("/runupdatedata") && userService.getRole(userId).equals("ADMIN")) {
+            } else if (messageText.equals("/runupdatedata") && userService.getRole(userId).equals("MAIN")) {
                 runUpdateData();
-                sendMessage(userId, "Таймер запущен");
+                sendMessage(userId, "Run update data started");
             } else if (messageText.equals("/mysales") && userService.getRole(userId).equals("SELLER")) {
                 mySalesCommand(userId);
             } else if (userMap.get(userId) != null) {
                 dataProcessing(userId, messageText, userMap.get(userId));
             } else if (messageText.equals("/admin") && userService.getRole(userId).equals("ADMIN")) { // admin panel
                 adminPanel(userId);
+            } else if (messageText.equals("/main") && userService.getRole(userId).equals("MAIN")) {
+                mainUserCommand(userId);
             } else if (adminMap.get(userId).get(0).equals("DELETE") && userService.getRole(userId).equals("ADMIN")) {
                 if (isInteger(messageText)){
                     deleteStaffConfirmCommand(userId, messageText);
@@ -111,6 +132,29 @@ public class TelegramBot extends TelegramLongPollingBot {
                 } else {
                     notNumberAdminCommand(userId);
                 }
+            } else if (adminMap.get(userId).get(0).equals("EMPLOYEE-DATA") && userService.getRole(userId).equals("ADMIN")) {
+                if (isInteger(messageText)){
+                    User user = userService.getUserById(messageText);
+                    if (user != null){
+                        int store = userService.getStoreByChat(userId);
+                        if (user.getStore() == store){
+                            employeeData(userId, user);
+                        } else {
+                            sendMessage(userId, "Сотрудник не из вашего магазина");
+                        }
+                    } else {
+                        sendMessage(userId, "Пользователя с таким id не существует. Введите id где все сотрудники");
+                    }
+                } else {
+                    sendMessage(userId, "Введите Id ввиде числа, без точек, тире, запятых и тд.!");
+                }
+            } else if (adminMap.get(userId).get(0).equals("ADD-PLAN") && userService.getRole(userId).equals("ADMIN")){
+                if (isInteger(messageText)){
+                    dayService.setPlanByAdmin(userId, adminMap.get(userId).get(1), Integer.parseInt(messageText));
+                    addPlanCommand(userId);
+                } else {
+                    sendMessage(userId, "Введите число без точек, тире, запятых и тд.");
+                }
             }
         } else if (update.hasCallbackQuery()){
             String callBackData = update.getCallbackQuery().getData();
@@ -118,6 +162,10 @@ public class TelegramBot extends TelegramLongPollingBot {
             long messageId = update.getCallbackQuery().getMessage().getMessageId();
 
             switch (callBackData){
+                // Main user Commands
+                case "ALL_STORES_BUTTON" ->
+                    storesCommand(userId, messageId);
+                //
                 case "USER_BUTTON" ->
                     userPanel(userId, messageId);
                 case "FAST_BUTTON" ->
@@ -134,6 +182,8 @@ public class TelegramBot extends TelegramLongPollingBot {
                     justMobileCommand(userId, messageId);
                 case "EMAIL_BUTTON" ->
                     emailCommand(userId, messageId);
+                case "MOBILE_CASH_BUTTON" ->
+                    mobileCashCommand(userId, messageId);
                 case "MONTH_SALES_USER_BUTTON" ->
                     myMonthSales(userId, messageId);
                 case "MY_SALES_BUTTON" ->
@@ -146,6 +196,8 @@ public class TelegramBot extends TelegramLongPollingBot {
                     staffCommand(userId, messageId);
                 case "ADMIN_BUTTON" ->
                     adminPanel(userId, messageId);
+                case "ALL_DATA_STORE_BUTTON" ->
+                    allDataStoreButton(userId, messageId);
                 case "DELETE_STAFF_BUTTON" ->
                     deleteStaffCommand(userId, messageId);
                 case "YES_DELETE_STAFF_BUTTON" ->
@@ -176,20 +228,226 @@ public class TelegramBot extends TelegramLongPollingBot {
                     todayDataCommand(userId, messageId);
                 case "MONTH_DATA_BUTTON" ->
                     monthDataCommand(userId, messageId);
+                case "NEXT_PAGE_BUTTON" ->
+                    nextPageCommand(userId, messageId);
+                case "EMPLOYEE_DATA_BUTTON" ->
+                    employeeDataCommand(userId, messageId);
+                case "ADD_PLAN_BUTTON" ->
+                    addPlanCommand(userId, messageId);
+                case "HERE_PLAN_BUTTON" ->
+                    setPlanCommand(userId, messageId, "here");
+                case "MOBILE_PLAN_BUTTON" ->
+                    setPlanCommand(userId, messageId, "mobile");
+                case "MOBILE_CASH_PLAN_BUTTON" ->
+                    setPlanCommand(userId, messageId, "mobile-cash");
+                default ->
+                    checkerButtons(userId, messageId, callBackData);
             }
         }
     }
 
-    private void monthDataCommand(long userId, long messageId) {
+    private void allDataStoreButton(long userId, long messageId) {
         InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
         List<List<InlineKeyboardButton>> rowsInline = new ArrayList<>();
         List<InlineKeyboardButton> rowInline = new ArrayList<>();
-        rowInline.add(makeButton("Назад ⬅", "DATA_BUTTON"));
+        rowInline.add(makeButton("Назад ⬅", "ADMIN_BUTTON"));
+        rowsInline.add(rowInline);
+        markup.setKeyboard(rowsInline);
+        String text = dayService.getStoreDataByMain(dayService.getStoreByUserId(userId));
+        sendEditTextMessageWithButtons(userId, text, messageId, markup);
+    }
+
+    private void storesCommand(long userId) {
+        InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+        List<List<InlineKeyboardButton>> rowsInline = new ArrayList<>();
+        List<Day> stores = dayService.getAllStores();
+        for (int i = 0; i < stores.size(); i++) {
+            List<InlineKeyboardButton> rowInline = new ArrayList<>();
+            rowInline.add(makeButton(stores.get(i).getName(), String.valueOf(stores.get(i).getStore())));
+            rowsInline.add(rowInline);
+        }
+        markup.setKeyboard(rowsInline);
+        sendMessageWithButtons(userId, "Выберите магазина для просмотра данных", markup);
+    }
+
+    private void storesCommand(long userId, long messageId) {
+        InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+        List<List<InlineKeyboardButton>> rowsInline = new ArrayList<>();
+        List<Day> stores = dayService.getAllStores();
+        for (int i = 0; i < stores.size(); i++) {
+            List<InlineKeyboardButton> rowInline = new ArrayList<>();
+            rowInline.add(makeButton(stores.get(i).getName(), String.valueOf(stores.get(i).getStore())));
+            rowsInline.add(rowInline);
+        }
+        markup.setKeyboard(rowsInline);
+        sendEditTextMessageWithButtons(userId, "Выберите магазина для просмотра данных", messageId, markup);
+    }
+
+
+    private void mainUserCommand(long userId) {
+        String text = "Достнупные команды: \n" +
+                "/main - вызвать эту же команду\n" +
+                "/stores - все магазины\n" +
+                "/notify - Уведомление всем сотрудникам скинуть данные\n" +
+                "/morning - Переиграть утренний сценарий(Удаляются сотрудники, админы выбирают пользователей, устанавливают план)\n" +
+                "/evening - Переиграть вечерний сценарий(Скидывается топ, общие данные)\n" +
+                "/resetdaydata - Обновляются данные за день(и удаляются сотрудники)\n" +
+                "/runupdatedata - Обновляется таймер";
+
+        sendMessage(userId, text);
+    }
+
+    private void setPlanCommand(long userId, long messageId, String value) {
+        InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+        List<List<InlineKeyboardButton>> rowsInline = new ArrayList<>();
+        List<InlineKeyboardButton> rowInline = new ArrayList<>();
+        rowInline.add(makeButton("Назад ⬅", "ADD_PLAN_BUTTON"));
         rowsInline.add(rowInline);
         markup.setKeyboard(rowsInline);
 
-        String text = userService.getStoreDataByChat(userId);
+        List<String> list = new ArrayList<>();
+        list.add(0, "ADD-PLAN");
+        switch (value){
+            case "here" -> {
+                list.add(1, "here");
+                adminMap.put(userId, list);
+            }
+            case "mobile" -> {
+                list.add(1, "mobile");
+                adminMap.put(userId, list);
+            }
+            case "mobile-cash" -> {
+                list.add(1, "mobile-cash");
+                adminMap.put(userId, list);
+            }
+        }
 
+        sendEditTextMessageWithButtons(userId, "Укажите план:", messageId, markup);
+    }
+
+    private void addPlanCommand(long userId, long messageId) {
+        int store = dayService.getStoreByUserId(userId);
+        Day plan = dayService.getPlanByStore(store);
+        String text;
+        if (plan != null){
+            text = "План на сегодня:\n" +
+                    "ЕК: " + plan.getHere() + "\n" +
+                    "МП: " + plan.getMobile() + "\n" +
+                    "МК: " + plan.getMobileCash() + "\nНажмите на кнопку чтобы изменить->\n\n<i>*/admin - основная команда админа</i>";
+        } else {
+            dayService.addPlanByStore(store, "План магазина " + store);
+            text = "Нажмите на кнопку чтобы добавить план->\n\n<i>*/admin - основная команда админа</i>";
+        }
+
+        InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+        List<List<InlineKeyboardButton>> rowsInline = new ArrayList<>();
+        List<InlineKeyboardButton> rowInline = new ArrayList<>();
+        List<InlineKeyboardButton> rowInline1 = new ArrayList<>();
+        rowInline.add(makeButton("ЕК \uD83D\uDDD1", "HERE_PLAN_BUTTON"));
+        rowInline.add(makeButton("МП \uD83D\uDCF1", "MOBILE_PLAN_BUTTON"));
+        rowInline.add(makeButton("МК \uD83D\uDCB8", "MOBILE_CASH_PLAN_BUTTON"));
+        rowInline1.add(makeButton("Основное меню \uD83D\uDDD3", "ADMIN_BUTTON"));
+        rowsInline.add(rowInline);
+        rowsInline.add(rowInline1);
+        markup.setKeyboard(rowsInline);
+        sendEditTextMessageWithButtons(userId, text, messageId, markup);
+    }
+
+    private void addPlanCommand(long userId) {
+        int store = dayService.getStoreByUserId(userId);
+        Day plan = dayService.getPlanByStore(store);
+        String text;
+        if (plan != null){
+            text = "План на сегодня:\n" +
+                    "ЕК: " + plan.getHere() + "\n" +
+                    "МП:" + plan.getMobile() + "\n" +
+                    "МК: " + plan.getMobileCash() + "\nНажмите на кнопку чтобы изменить->\n\n<i>*/admin - основная команда админа</i>";
+        } else {
+            dayService.addPlanByStore(store, "План магазина " + store);
+            text = "Нажмите на кнопку чтобы добавить план->\n\n<i>*/admin - основная команда админа</i>";
+        }
+
+        InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+        List<List<InlineKeyboardButton>> rowsInline = new ArrayList<>();
+        List<InlineKeyboardButton> rowInline = new ArrayList<>();
+        List<InlineKeyboardButton> rowInline1 = new ArrayList<>();
+        rowInline.add(makeButton("ЕК \uD83D\uDDD1", "HERE_PLAN_BUTTON"));
+        rowInline.add(makeButton("МП \uD83D\uDCF1", "MOBILE_PLAN_BUTTON"));
+        rowInline.add(makeButton("МК \uD83D\uDCB8", "MOBILE_CASH_PLAN_BUTTON"));
+        rowInline1.add(makeButton("Основное меню \uD83D\uDDD3", "ADMIN_BUTTON"));
+        rowsInline.add(rowInline);
+        rowsInline.add(rowInline1);
+        markup.setKeyboard(rowsInline);
+        sendMessageWithButtons(userId, text, markup);
+    }
+
+
+    private void nextPageCommand(long userId, long messageId) {
+        if (adminPageCounter.get(userId) + 10 < adminPage.get(userId).size()){
+            adminPageCounter.put(userId, adminPageCounter.get(userId) + 10);
+        } else {
+            adminPageCounter.put(userId, adminPage.get(userId).size());
+        }
+        InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+        List<List<InlineKeyboardButton>> rowsInline = new ArrayList<>();
+        for (int j = adminPageCounter.get(userId) - 10; j < adminPageCounter.get(userId); j++) {
+            List<InlineKeyboardButton> rowInline = new ArrayList<>();
+            rowInline.add(makeButton(adminPage.get(userId).get(j).getName(), String.valueOf(j)));
+            rowsInline.add(rowInline);
+        }
+        if (adminPageCounter.get(userId) < adminPage.get(userId).size()) {
+            List<InlineKeyboardButton> rowInline = new ArrayList<>();
+            rowInline.add(makeButton("➡", "NEXT_PAGE_BUTTON"));
+            rowsInline.add(rowInline);
+        }
+        markup.setKeyboard(rowsInline);
+        String text = dayService.getSellersByAdminChat(userId);
+        sendEditTextMessageWithButtons(userId, text, messageId, markup);
+    }
+
+    private void checkerButtons(long userId, long messageId, String callBackData) {
+        // Если в кнопке содержится id сотрудника
+        if (isInteger(callBackData)) {
+            if (userService.getRole(userId).equals("MAIN")){
+                selectedStoreCommand(userId, messageId, callBackData);
+            } else if (userService.getRole(userId).equals("ADMIN")) {
+                    //adding user and deleting
+                    User user = adminPage.get(userId).get(Integer.parseInt(callBackData));
+                    dayService.addUserByChat(user.getChat(), user.getName(), user.getStore(), user.getRole());
+                    userMap.put(user.getChat(), "null");
+                    User newUser = new User();
+                    newUser.setName(user.getName() + " ✅");
+                    adminPage.get(userId).put(Integer.parseInt(callBackData), newUser);
+
+                    // sending message
+                    InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+                    List<List<InlineKeyboardButton>> rowsInline = new ArrayList<>();
+                    for (int j = adminPageCounter.get(userId) - 10; j < adminPageCounter.get(userId); j++) {
+                        List<InlineKeyboardButton> rowInline = new ArrayList<>();
+                        rowInline.add(makeButton(adminPage.get(userId).get(j).getName(), String.valueOf(j)));
+                        rowsInline.add(rowInline);
+                    }
+                    if (adminPageCounter.get(userId) < adminPage.get(userId).size()) {
+                        List<InlineKeyboardButton> rowInline = new ArrayList<>();
+                        rowInline.add(makeButton("➡", "NEXT_PAGE_BUTTON"));
+                        rowsInline.add(rowInline);
+                    }
+                    markup.setKeyboard(rowsInline);
+                    String text = dayService.getSellersByAdminChat(userId);
+                    sendEditTextMessageWithButtons(userId, text, messageId, markup);
+                }
+            }
+    }
+
+    private void selectedStoreCommand(long userId, long messageId, String callBackData) {
+        InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+        List<List<InlineKeyboardButton>> rowsInline = new ArrayList<>();
+        List<InlineKeyboardButton> rowInline = new ArrayList<>();
+        rowInline.add(makeButton("Назад ⬅", "ALL_STORES_BUTTON"));
+        rowsInline.add(rowInline);
+        markup.setKeyboard(rowsInline);
+
+        String text = dayService.getStoreDataByMain(Integer.parseInt(callBackData));
         sendEditTextMessageWithButtons(userId, text, messageId, markup);
     }
 
@@ -199,19 +457,19 @@ public class TelegramBot extends TelegramLongPollingBot {
             @Override
             public void run() {
                 int hour = java.time.LocalTime.now().getHour();
-                switch (hour){
-                    case 9 ->   // Обновляются общие данные
-                                // TODO админы выбирают людей
+                switch (hour){ //TODO 8 утра
+                    case 8 ->   // Обновляются общие данные
+                                // админы выбирают людей
                         morningRoutine();
-                    case 13, 21 ->  // Уведомления для сотрудников
+                    case 13  ->  // Уведомления для сотрудников
                         notifications();
                     case 14, 18 -> // Присылается в админский чат данные
-                        sendDataToAdminGroup();
-                    case 22 ->  // Присылаются общие данные
+                        dayRoutine();
+                    case 22 -> // Присылаются общие данные
+                            eveningRoutine();
                                 // Скидывается топ
                                 // Добавляются данные в месяц
                                 // Обновляются транзакции
-                        eveningRoutine();
                 }
             }
         }, 0, 3600000); // Проверка каждый час
@@ -224,19 +482,124 @@ public class TelegramBot extends TelegramLongPollingBot {
         rowInline.add(makeButton("Записать данные ✍", "USER_BUTTON"));
         rowsInline.add(rowInline);
         markup.setKeyboard(rowsInline);
-        List<Long> sellers = dayService.getSellersChats();
-        for (int i = 0; i < sellers.size(); i++) {
-            sendMessageWithButtons(sellers.get(i), "В скором времени будет опубликован отчёт, просьба записать данные!", markup);
+        // Checking plan
+        List<Day> plans = dayService.getPlans();
+        for (int i = 0; i < plans.size(); i++) {
+            List<Day> sellersByStore = dayService.getSellersByStore(plans.get(i).getStore());
+            for (int j = 0; j < sellersByStore.size(); j++) {
+                String text = "В скором времени будет опубликован отчёт, необходимо скинуть данные.\n<b>Ваш план на сегодня:</b>\n";
+                long sumOfApp = sellersByStore.get(j).getMobile() + sellersByStore.get(j).getEmail();
+                if (sellersByStore.get(j).getHere() < plans.get(i).getHere()){
+                    text = text + "<b>ЕК:</b> " + sellersByStore.get(j).getHere() + "/" + plans.get(i).getHere() + " Не выполнено ❌\n";
+                }
+                if (sellersByStore.get(j).getHere() >= plans.get(i).getHere()){
+                    text = text + "<b>ЕК:</b> " + sellersByStore.get(j).getHere() + "/" + plans.get(i).getHere() + " Выполнено ✅\n";
+                }
+                if (sumOfApp < plans.get(i).getMobile()){
+                    text = text + "<b>МП:</b> " + sumOfApp + "/" + plans.get(i).getMobile() + " Не выполнено ❌\n";
+                }
+                if (sumOfApp >= plans.get(i).getMobile()){
+                    text = text + "<b>МП:</b> " + sumOfApp + "/" + plans.get(i).getMobile() + " Выполнено ✅\n";
+                }
+                if (sellersByStore.get(j).getMobileCash() < plans.get(i).getMobileCash()){
+                    text = text + "<b>МК:</b> " + sellersByStore.get(j).getMobileCash() + "/" + plans.get(i).getMobileCash() + " Не выполнено ❌\n";
+                }
+                if (sellersByStore.get(j).getMobileCash() >= plans.get(i).getMobileCash()){
+                    text = text + "<b>МК:</b> " + sellersByStore.get(j).getMobileCash() + "/" + plans.get(i).getMobileCash() + " Выполнено ✅\n";
+                }
+                sendMessageWithButtons(sellersByStore.get(j).getChat(), text, markup);
+            }
+        }
+    }
+
+
+    private void notificationsByAdmin(long userId) {
+        InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+        List<List<InlineKeyboardButton>> rowsInline = new ArrayList<>();
+        List<InlineKeyboardButton> rowInline = new ArrayList<>();
+        rowInline.add(makeButton("Записать данные ✍", "USER_BUTTON"));
+        rowsInline.add(rowInline);
+        markup.setKeyboard(rowsInline);
+        int store = dayService.getStoreByUserId(userId);
+        Day plan = dayService.getPlanByStore(store);
+        List<Day> sellersByStore = dayService.getSellersByStore(store);
+
+        // Checking plan
+            for (int j = 0; j < sellersByStore.size(); j++) {
+                String text = "Скидываем данные\n<b>Ваш план на сегодня:</b>\n";
+                long sumOfApp = sellersByStore.get(j).getMobile() + sellersByStore.get(j).getEmail();
+                if (sellersByStore.get(j).getHere() < plan.getHere()){
+                    text = text + "<b>ЕК:</b> " + sellersByStore.get(j).getHere() + "/" + plan.getHere() + " Не выполнено ❌\n";
+                }
+                if (sellersByStore.get(j).getHere() >= plan.getHere()){
+                    text = text + "<b>ЕК:</b> " + sellersByStore.get(j).getHere() + "/" + plan.getHere() + " Выполнено ✅\n";
+                }
+                if (sumOfApp < plan.getMobile()){
+                    text = text + "<b>МП:</b> " + sumOfApp + "/" + plan.getMobile() + " Не выполнено ❌\n";
+                }
+                if (sumOfApp >= plan.getMobile()){
+                    text = text + "<b>МП:</b> " + sumOfApp + "/" + plan.getMobile() + " Выполнено ✅\n";
+                }
+                if (sellersByStore.get(j).getMobileCash() < plan.getMobileCash()){
+                    text = text + "<b>МК:</b> " + sellersByStore.get(j).getMobileCash() + "/" + plan.getMobileCash() + "Не выполнено ❌\n";
+                }
+                if (sellersByStore.get(j).getMobileCash() >= plan.getMobileCash()){
+                    text = text + "<b>МК:</b> " + sellersByStore.get(j).getMobileCash() + "/" + plan.getMobileCash() + " Выполнено ✅\n";
+                }
+                sendMessageWithButtons(sellersByStore.get(j).getChat(), text, markup);
+            }
+    }
+
+    private void sellerList(){
+        List<Day> allAdmins = dayService.getAllAdmin();
+
+        //Adding sellers to the map
+        for (int i = 0; i < allAdmins.size(); i++) {
+            int store = allAdmins.get(i).getStore();
+            List<User> users = userService.getEmployeesByStore(store);
+            Map<Integer, User> map = new HashMap<>();
+            for (int j = 0; j < users.size(); j++) {
+                map.put(j, users.get(j));
+                System.out.println(users.get(j));
+            }
+            System.out.println(users.size());
+            adminPage.put(allAdmins.get(i).getChat(), map);
+        }
+
+        for (int i = 0; i < allAdmins.size(); i++) {
+            long userId = allAdmins.get(i).getChat();
+            //TODO изменить на 10
+            adminPageCounter.put(userId, 2);
+            InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+            List<List<InlineKeyboardButton>> rowsInline = new ArrayList<>();
+            for (int j = 0; j < adminPageCounter.get(userId); j++) {
+                List<InlineKeyboardButton> rowInline = new ArrayList<>();
+                rowInline.add(makeButton(adminPage.get(userId).get(j).getName(), String.valueOf(j)));
+                rowsInline.add(rowInline);
+                System.out.println(adminPage.get(userId).get(j).getName());
+            }
+            List<InlineKeyboardButton> rowInline = new ArrayList<>();
+            rowInline.add(makeButton("➡", "NEXT_PAGE_BUTTON"));
+            rowsInline.add(rowInline);
+            markup.setKeyboard(rowsInline);
+            sendMessageWithButtons(allAdmins.get(i).getChat(), "Выберите сотрудника по кнопке", markup);
+        }
+
+        //Setting plan for Seller
+        for (int i = 0; i < allAdmins.size(); i++) {
+            InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+            List<List<InlineKeyboardButton>> rowsInline = new ArrayList<>();
+            List<InlineKeyboardButton> rowInline = new ArrayList<>();
+            rowInline.add(makeButton("Указать план \uD83E\uDDD0", "ADD_PLAN_BUTTON"));
+            rowsInline.add(rowInline);
+            markup.setKeyboard(rowsInline);
+            sendMessageWithButtons(allAdmins.get(i).getChat(), "Нажмите на кнопку чтобы указать план на продавца->", markup);
         }
     }
 
     private void morningRoutine() {
         resetDayData();
-
-//        List<Day> allAdmin = dayService.getAllAdmin();
-//        for (int i = 0; i < allAdmin.size(); i++) {
-//            sendMessageWithButtons(allAdmin.get(i).getChat(), "Выберите продавцов на день");
-//        }
+        sellerList();
     }
 
     private void eveningRoutine() {
@@ -255,15 +618,36 @@ public class TelegramBot extends TelegramLongPollingBot {
 
         transactionService.resetTransactions();
     }
+    
+    
 
     private void topCommand(long chatId) {
         List<String> tops = dayService.getTop(chatId);
         StringBuilder builder = new StringBuilder();
-        builder.append("Топ за сегодня \uD83C\uDFC6 \n");
+        builder.append("<b>Топ за сегодня</b> \uD83C\uDFC6 \n");
         for (int i = 0; i < tops.size(); i++) {
             builder.append(tops.get(i));
         }
         sendMessage(chatId, builder.toString());
+    }
+
+    private void dayRoutine(){
+        sendDataToAdminGroup();
+        sendSellersToAdmin();
+    }
+
+    private void sendSellersToAdmin() {
+        List<Day> admins = dayService.getAllAdmin();
+        for (int i = 0; i < admins.size(); i++) {
+            List<Day> sellers = dayService.getSellersByStore(admins.get(i).getStore());
+            Day plan = dayService.getPlanByStore(admins.get(i).getStore());
+            Day store = dayService.getStoreByStore(admins.get(i).getStore());
+            StringBuilder builder = new StringBuilder();
+            builder.append("Выполнение плана сотрудниками:\n");
+            builder.append("ЕК: ").append(store.getHere()).append("/").append(plan.getHere() * sellers.size()).append("\n");
+            builder.append("МП: ").append(store.getMobile() + store.getEmail()).append("/").append((plan.getMobile() * sellers.size()) + (plan.getEmail() * sellers.size()));
+            builder.append("МК: ").append(store.getMobileCash()).append("/").append(plan.getMobileCash() * sellers.size());
+        }
     }
 
     private void sendDataToAdminGroup(){
@@ -349,7 +733,7 @@ public class TelegramBot extends TelegramLongPollingBot {
         } else if (type.equals("delete-transaction")) {
             dayService.deleteDataByTransaction(transactionService.deleteTransaction(sum));
             sendMessage(userId, "Транзакция удалена");
-        } else if (isInteger(sum) && dayService.getUserById(userId)) {
+        } else if (isInteger(sum) && !dayService.getUserById(userId)) {
             dayService.addData(userId, sum, type);
             String transaction = transactionService.createTransaction(userId, sum, type);
             sendMessage(userId, transaction);
@@ -459,18 +843,33 @@ public class TelegramBot extends TelegramLongPollingBot {
         sendEditTextMessageWithButtons(userId, text, messageId, markup);
     }
 
+    private void mobileCashCommand(long userId, long messageId) {
+        InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+        List<List<InlineKeyboardButton>> rowsInline = new ArrayList<>();
+        List<InlineKeyboardButton> rowInline = new ArrayList<>();
+        rowInline.add(makeButton("Назад ⬅", "USER_BUTTON"));
+        rowsInline.add(rowInline);
+        markup.setKeyboard(rowsInline);
+        userMap.put(userId, "mobile-cash");
+        String text = "Введите количество МК без точек, тире, пробелов:";
+        sendEditTextMessageWithButtons(userId, text, messageId, markup);
+    }
+
     private void userPanel(long userId){
         InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
         List<List<InlineKeyboardButton>> rowsInline = new ArrayList<>();
         List<InlineKeyboardButton> rowInline1 = new ArrayList<>();
         List<InlineKeyboardButton> rowInline2 = new ArrayList<>();
         List<InlineKeyboardButton> rowInline3 = new ArrayList<>();
+        List<InlineKeyboardButton> rowInline4 = new ArrayList<>();
         rowInline1.add(makeButton("Единая корзина \uD83D\uDDD1", "CART_BUTTON"));
         rowInline2.add(makeButton("Мобильное приложение \uD83D\uDCF1", "MOBILE_BUTTON"));
         rowInline3.add(makeButton("Быстрая продажа \uD83D\uDCB8", "FAST_BUTTON"));
+        rowInline4.add(makeButton("Мобильная касса \uD83D\uDDA8", "MOBILE_CASH_BUTTON"));
         rowsInline.add(rowInline1);
         rowsInline.add(rowInline2);
         rowsInline.add(rowInline3);
+        rowsInline.add(rowInline4);
         markup.setKeyboard(rowsInline);
         userMap.put(userId, "null");
         String text = "Выберите необходимый пункт:\n<i>*Чтобы управлять данными, нажмите /mysales</i>";
@@ -483,12 +882,15 @@ public class TelegramBot extends TelegramLongPollingBot {
         List<InlineKeyboardButton> rowInline1 = new ArrayList<>();
         List<InlineKeyboardButton> rowInline2 = new ArrayList<>();
         List<InlineKeyboardButton> rowInline3 = new ArrayList<>();
+        List<InlineKeyboardButton> rowInline4 = new ArrayList<>();
         rowInline1.add(makeButton("Единая корзина \uD83D\uDDD1", "CART_BUTTON"));
         rowInline2.add(makeButton("Мобильное приложение \uD83D\uDCF1", "MOBILE_BUTTON"));
         rowInline3.add(makeButton("Быстрая продажа \uD83D\uDCB8", "FAST_BUTTON"));
+        rowInline4.add(makeButton("Мобильная касса \uD83D\uDDA8", "MOBILE_CASH_BUTTON"));
         rowsInline.add(rowInline1);
         rowsInline.add(rowInline2);
         rowsInline.add(rowInline3);
+        rowsInline.add(rowInline4);
         markup.setKeyboard(rowsInline);
         userMap.put(userId, "null");
         String text = "<b>Выберите необходимый пункт:</b>\n<i>*Чтобы управлять данными, нажмите /mysales</i>";
@@ -496,6 +898,48 @@ public class TelegramBot extends TelegramLongPollingBot {
     }
 
     // ADMIN COMMANDS
+
+    private void employeeData(long userId, User user) {
+        InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+        List<List<InlineKeyboardButton>> rowsInline = new ArrayList<>();
+        List<InlineKeyboardButton> rowInline = new ArrayList<>();
+        rowInline.add(makeButton("Главное меню", "ADMIN_BUTTON"));
+        rowsInline.add(rowInline);
+        markup.setKeyboard(rowsInline);
+
+        String text = "Данные сотрудника: " + user.getName() + "\n" +
+                dayService.getMySales(user.getChat());
+
+        sendMessageWithButtons(userId, text, markup);
+
+    }
+
+    private void monthDataCommand(long userId, long messageId) {
+        InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+        List<List<InlineKeyboardButton>> rowsInline = new ArrayList<>();
+        List<InlineKeyboardButton> rowInline = new ArrayList<>();
+        rowInline.add(makeButton("Назад ⬅", "DATA_BUTTON"));
+        rowsInline.add(rowInline);
+        markup.setKeyboard(rowsInline);
+
+        String text = userService.getStoreDataByChat(userId);
+
+        sendEditTextMessageWithButtons(userId, text, messageId, markup);
+    }
+
+    private void employeeDataCommand(long userId, long messageId) {
+        InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
+        List<List<InlineKeyboardButton>> rowsInline = new ArrayList<>();
+        List<InlineKeyboardButton> rowInline = new ArrayList<>();
+        rowInline.add(makeButton("Назад ⬅", "DATA_BUTTON"));
+        rowsInline.add(rowInline);
+        markup.setKeyboard(rowsInline);
+        sendEditTextMessageWithButtons(userId, "Введите Id сотрудника чтобы посмотреть его данные:", messageId, markup);
+        List<String> list = new ArrayList<>();
+        list.add(0, "EMPLOYEE-DATA");
+        adminMap.put(userId, list);
+    }
+
 
     private void todayDataCommand(long userId, long messageId) {
         InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
@@ -539,7 +983,7 @@ public class TelegramBot extends TelegramLongPollingBot {
         List<InlineKeyboardButton> rowInline3 = new ArrayList<>();
         rowInline.add(makeButton("Сегодня ☀", "TODAY_DATA_BUTTON"));
         rowInline.add(makeButton("Месяц \uD83D\uDCC5", "MONTH_DATA_BUTTON"));
-        rowInline1.add(makeButton("Данные сотрудника ❌", "NOT_YET"));
+        rowInline1.add(makeButton("Данные сотрудника ✅", "EMPLOYEE_DATA_BUTTON"));
         rowInline2.add(makeButton("Обновить \uD83D\uDD04", "UPDATE_DATA_BUTTON"));
         rowInline3.add(makeButton("Назад ⬅", "ADMIN_BUTTON"));
         rowsInline.add(rowInline);
@@ -552,9 +996,19 @@ public class TelegramBot extends TelegramLongPollingBot {
 
     private void addTodayStaffConfirmCommand(long userId, String messageText) {
         User user = userService.getUserById(messageText);
-        userMap.put(user.getChat(), "null");
-        sendMessage(userId, dayService.addUserByChat(user.getChat(), user.getName(), user.getStore(), user.getRole()));
-        adminPanel(userId);
+        if (dayService.getStoreByUserId(userId) == user.getStore()) {
+            if (dayService.getUserById(user.getChat())) {
+                userMap.put(user.getChat(), "null");
+                sendMessage(userId, dayService.addUserByChat(user.getChat(), user.getName(), user.getStore(), user.getRole()));
+                adminPanel(userId);
+            } else {
+                sendMessage(userId, "Пользователь уже существует");
+                adminPanel(userId);
+            }
+        } else {
+            sendMessage(userId, "Вы пытаетесь добавить сотрудника другого магазина");
+        }
+
     }
 
     private void addTodayStaffCommand(long userId, long messageId) {
@@ -780,22 +1234,30 @@ public class TelegramBot extends TelegramLongPollingBot {
         InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
         List<List<InlineKeyboardButton>> rowsInline = new ArrayList<>();
         List<InlineKeyboardButton> rowInline = new ArrayList<>();
+        List<InlineKeyboardButton> rowInline1 = new ArrayList<>();
+        rowInline.add(makeButton("План \uD83D\uDCCB", "ADD_PLAN_BUTTON"));
         rowInline.add(makeButton("Данные \uD83D\uDCCA", "DATA_BUTTON"));
-        rowInline.add(makeButton("Сотрудники \uD83D\uDC65", "STAFF_BUTTON"));
+        rowInline1.add(makeButton("Сотрудники \uD83D\uDC65", "STAFF_BUTTON"));
+        rowInline1.add(makeButton("Общая статистика \uD83D\uDCE3", "ALL_DATA_STORE_BUTTON"));
         rowsInline.add(rowInline);
+        rowsInline.add(rowInline1);
         markup.setKeyboard(rowsInline);
-        sendMessageWithButtons(userId, "Вы на главной странице", markup);
+        sendMessageWithButtons(userId, "Вы в панеле админстратора:\n\n<b>Доступные команды - </b>\n/notifybyadmin - Отправляются уведомления сотрудникм о выполнении плана", markup);
     }
 
     private void adminPanel(long userId, long messageId) {
         InlineKeyboardMarkup markup = new InlineKeyboardMarkup();
         List<List<InlineKeyboardButton>> rowsInline = new ArrayList<>();
         List<InlineKeyboardButton> rowInline = new ArrayList<>();
+        List<InlineKeyboardButton> rowInline1 = new ArrayList<>();
+        rowInline.add(makeButton("План \uD83D\uDCCB", "ADD_PLAN_BUTTON"));
         rowInline.add(makeButton("Данные \uD83D\uDCCA", "DATA_BUTTON"));
-        rowInline.add(makeButton("Сотрудники \uD83D\uDC65", "STAFF_BUTTON"));
+        rowInline1.add(makeButton("Сотрудники \uD83D\uDC65", "STAFF_BUTTON"));
+        rowInline1.add(makeButton("Общая статистика \uD83D\uDCE3", "ALL_DATA_STORE_BUTTON"));
         rowsInline.add(rowInline);
+        rowsInline.add(rowInline1);
         markup.setKeyboard(rowsInline);
-        sendEditTextMessageWithButtons(userId, "Вы на главной странице", messageId, markup);
+        sendEditTextMessageWithButtons(userId, "Вы в панеле админстратора:\n\n<b>Доступные команды - </b>\n/notifybyadmin - Отправляются уведомления сотрудникм о выполнении плана", messageId, markup);
     }
 
     private void sendMessage(Long chatId, String textToSend) {

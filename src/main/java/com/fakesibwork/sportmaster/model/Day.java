@@ -23,4 +23,5 @@ public class Day {
     private int mobile;
     private int email;
     private int fast;
+    private int mobileCash;
 }
